@@ -1,4 +1,4 @@
-FROM ghcr.io/dfinity/icp-dev-env:latest
+FROM ghcr.io/dfinity/icp-dev-env:18
 
 WORKDIR /app
 
