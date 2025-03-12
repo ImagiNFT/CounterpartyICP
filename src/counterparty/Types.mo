@@ -34,5 +34,5 @@ module {
         consensus_endpoints: [Text];
         out_of_consensus_endpoints: [Text];
         response: Text;
-    }
+    };
 };

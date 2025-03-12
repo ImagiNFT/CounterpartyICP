@@ -180,11 +180,11 @@ actor {
     decoded_text;
   };
 
-  private func contains(arr: [Text], item: Text) : Bool {
+  private func contains(arr : [Text], item : Text) : Bool {
     for (element in arr.vals()) {
       if (element == item) {
         return true;
-      }
+      };
     };
     return false;
   };
@@ -233,7 +233,7 @@ actor {
           };
           i += 1;
         };
-      }
+      };
     };
 
     var i = 0;
@@ -256,7 +256,7 @@ actor {
     };
   };
 
-  public func getAssets(
+  public shared func getAssets(
     named : ?Bool,
     cursor : ?Text,
     limit : ?Nat,
@@ -287,7 +287,7 @@ actor {
     );
   };
 
-  public func getAssetInfo(
+  public shared func getAssetInfo(
     asset : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -306,7 +306,7 @@ actor {
     );
   };
 
-  public func getAssetBalances(
+  public shared func getAssetBalances(
     asset : Text,
     balanceType : ?BalanceType,
     cursor : ?Text,
@@ -339,7 +339,7 @@ actor {
     );
   };
 
-  public func getBalancesByAssetAndAddress(
+  public shared func getBalancesByAssetAndAddress(
     asset : Text,
     address : Text,
     verbose : ?Bool,
@@ -359,7 +359,7 @@ actor {
     );
   };
 
-  public func getOrdersByAsset(
+  public shared func getOrdersByAsset(
     asset : Text,
     status : ?OrderStatus,
     cursor : ?Text,
@@ -392,7 +392,7 @@ actor {
     );
   };
 
-  public func getOrderMatchesByAsset(
+  public shared func getOrderMatchesByAsset(
     asset : Text,
     status : ?OrderStatus,
     cursor : ?Text,
@@ -425,7 +425,7 @@ actor {
     );
   };
 
-  public func getCreditsByAsset(
+  public shared func getCreditsByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -455,7 +455,7 @@ actor {
     );
   };
 
-  public func getDebitsByAsset(
+  public shared func getDebitsByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -485,7 +485,7 @@ actor {
     );
   };
 
-  public func getDividendsByAsset(
+  public shared func getDividendsByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -515,7 +515,7 @@ actor {
     );
   };
 
-  public func getIssuancesByAsset(
+  public shared func getIssuancesByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -545,7 +545,7 @@ actor {
     );
   };
 
-  public func getSendsByAsset(
+  public shared func getSendsByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -575,7 +575,7 @@ actor {
     );
   };
 
-  public func getDispensersByAsset(
+  public shared func getDispensersByAsset(
     asset : Text,
     status : ?DispenserStatus,
     cursor : ?Text,
@@ -608,7 +608,7 @@ actor {
     );
   };
 
-  public func getDispenserByAddressAndAsset(
+  public shared func getDispenserByAddressAndAsset(
     address : Text,
     asset : Text,
     verbose : ?Bool,
@@ -630,7 +630,7 @@ actor {
     );
   };
 
-  public func getAssetHolders(
+  public shared func getAssetHolders(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -660,7 +660,7 @@ actor {
     );
   };
 
-  public func getDispensesByAsset(
+  public shared func getDispensesByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -690,7 +690,7 @@ actor {
     );
   };
 
-  public func getSubassetsByAsset(
+  public shared func getSubassetsByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -720,7 +720,7 @@ actor {
     );
   };
 
-  public func getFairmintersByAsset(
+  public shared func getFairmintersByAsset(
     asset : Text,
     status : ?FairminterStatus,
     cursor : ?Text,
@@ -753,7 +753,7 @@ actor {
     );
   };
 
-  public func getFairmintsByAsset(
+  public shared func getFairmintsByAsset(
     asset : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -783,7 +783,7 @@ actor {
     );
   };
 
-  public func getFairmintsByAddressAndAsset(
+  public shared func getFairmintsByAddressAndAsset(
     asset : Text,
     address : Text,
     cursor : ?Text,
@@ -814,7 +814,7 @@ actor {
     );
   };
 
-  public func getOrders(
+  public shared func getOrders(
     status : ?OrderStatus,
     get_asset : ?Text,
     give_asset : ?Text,
@@ -852,7 +852,7 @@ actor {
     );
   };
 
-  public func getOrder(
+  public shared func getOrder(
     order_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -873,7 +873,7 @@ actor {
     );
   };
 
-  public func getOrderMatchesByOrder(
+  public shared func getOrderMatchesByOrder(
     order_hash : Text,
     status : ?OrderStatus,
     cursor : ?Text,
@@ -906,7 +906,7 @@ actor {
     );
   };
 
-  public func getBTCPaysByOrder(
+  public shared func getBTCPaysByOrder(
     order_hash : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -936,7 +936,7 @@ actor {
     );
   };
 
-  public func getOrdersByTwoAssets(
+  public shared func getOrdersByTwoAssets(
     asset1 : Text,
     asset2 : Text,
     status : ?OrderStatus,
@@ -970,7 +970,7 @@ actor {
     );
   };
 
-  public func getAllOrderMatches(
+  public shared func getAllOrderMatches(
     status : ?OrderStatus,
     cursor : ?Text,
     limit : ?Nat,
@@ -1002,7 +1002,7 @@ actor {
     );
   };
 
-  public func getBets(
+  public shared func getBets(
     status : ?BetStatus,
     cursor : ?Text,
     limit : ?Nat,
@@ -1034,7 +1034,7 @@ actor {
     );
   };
 
-  public func getBet(
+  public shared func getBet(
     bet_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -1055,7 +1055,7 @@ actor {
     );
   };
 
-  public func getBetMatchesByBet(
+  public shared func getBetMatchesByBet(
     bet_hash : Text,
     status : ?BetStatus,
     cursor : ?Text,
@@ -1087,7 +1087,7 @@ actor {
     );
   };
 
-  public func getResolutionsByBet(
+  public shared func getResolutionsByBet(
     bet_hash : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -1116,7 +1116,7 @@ actor {
     );
   };
 
-  public func getAllBurns(
+  public shared func getAllBurns(
     cursor : ?Text,
     limit : ?Nat,
     offset : ?Nat,
@@ -1144,7 +1144,7 @@ actor {
     );
   };
 
-  public func getDispensers(
+  public shared func getDispensers(
     status : ?DispenserStatus,
     cursor : ?Text,
     limit : ?Nat,
@@ -1175,7 +1175,7 @@ actor {
     );
   };
 
-  public func getDispenserInfoByHash(
+  public shared func getDispenserInfoByHash(
     dispenser_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -1195,7 +1195,7 @@ actor {
     );
   };
 
-  public func getDispensesByDispenser(
+  public shared func getDispensesByDispenser(
     dispenser_hash : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -1224,7 +1224,7 @@ actor {
     );
   };
 
-  public func getDividends(
+  public shared func getDividends(
     cursor : ?Text,
     limit : ?Nat,
     offset : ?Nat,
@@ -1252,7 +1252,7 @@ actor {
     );
   };
 
-  public func getDividend(
+  public shared func getDividend(
     dividend_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -1272,7 +1272,7 @@ actor {
     );
   };
 
-  public func getDividendDistribution(
+  public shared func getDividendDistribution(
     dividend_hash : Text,
     cursor : ?Text,
     limit : ?Nat,
@@ -1301,7 +1301,7 @@ actor {
     );
   };
 
-  public func getDispenses(
+  public shared func getDispenses(
     cursor : ?Text,
     limit : ?Nat,
     offset : ?Nat,
@@ -1329,7 +1329,7 @@ actor {
     );
   };
 
-  public func getSends(
+  public shared func getSends(
     cursor : ?Text,
     limit : ?Nat,
     offset : ?Nat,
@@ -1358,7 +1358,7 @@ actor {
     );
   };
 
-  public func getIssuances(
+  public shared func getIssuances(
     asset_events : ?AssetEventType,
     cursor : ?Text,
     limit : ?Nat,
@@ -1390,7 +1390,7 @@ actor {
     );
   };
 
-  public func getIssuanceByTransactionHash(
+  public shared func getIssuanceByTransactionHash(
     tx_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -1411,7 +1411,7 @@ actor {
     );
   };
 
-  public func getSweeps(
+  public shared func getSweeps(
     cursor : ?Text,
     limit : ?Nat,
     offset : ?Nat,
@@ -1439,7 +1439,7 @@ actor {
     );
   };
 
-  public func getSweepByTransactionHash(
+  public shared func getSweepByTransactionHash(
     tx_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -1459,7 +1459,7 @@ actor {
     );
   };
 
-  public func getValidBroadcasts(
+  public shared func getValidBroadcasts(
     cursor : ?Text,
     limit : ?Nat,
     offset : ?Nat,
@@ -1488,7 +1488,7 @@ actor {
     );
   };
 
-  public func getBroadcastByTransactionHash(
+  public shared func getBroadcastByTransactionHash(
     tx_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -1509,7 +1509,7 @@ actor {
     );
   };
 
-  public func getAllFairminters(
+  public shared func getAllFairminters(
     status : ?FairminterStatus,
     cursor : ?Text,
     limit : ?Nat,
@@ -1541,7 +1541,7 @@ actor {
     );
   };
 
-  public func getAllFairmints(
+  public shared func getAllFairmints(
     cursor : ?Text,
     limit : ?Nat,
     offset : ?Nat,
@@ -1569,7 +1569,7 @@ actor {
     );
   };
 
-  public func getFairmint(
+  public shared func getFairmint(
     tx_hash : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
@@ -1590,7 +1590,7 @@ actor {
     );
   };
 
-  public func getBalancesByAddress(
+  public shared func getBalancesByAddress(
     address : Text,
     balanceType : ?BalanceType,
     cursor : ?Text,
@@ -1624,7 +1624,7 @@ actor {
     );
   };
 
-  public func composeSend(
+  public shared func composeSend(
     address : Text,
     destination : Text,
     asset : Text,
@@ -1649,5 +1649,4 @@ actor {
       percentage_treshold,
     );
   };
-
 };
