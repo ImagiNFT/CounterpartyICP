@@ -4,13 +4,19 @@ import Array "mo:base/Array";
 import Text "mo:base/Text";
 import Bool "mo:base/Bool";
 import Nat "mo:base/Nat";
-import Random "mo:base/Random";
-import UUID "mo:idempotency-keys/idempotency-keys";
 import Types "Types";
 import Option "mo:base/Option";
+import TrieMap "mo:base/TrieMap";
 
 actor {
-  let counterparty_endpoint = "https://counterparty.0.srcpad.pro";
+  let counterparty_endpoints : [Text] = [
+    "https://counterparty.0.srcpad.pro",
+    "https://api.counterparty.io:4000",
+    "https://cp20-api.tokenscan.io:4001",
+    "https://classic-api.tokenscan.io:4001",
+  ];
+
+  let percentage_treshold = 50;
 
   type BalanceType = {
     #all;
@@ -98,7 +104,7 @@ actor {
       case (#expired) { "expired" };
       case (#filled) { "filled" };
       case (#open) { "open" };
-      case (#pending) { "pending"};
+      case (#pending) { "pending" };
     };
     betStatusText;
   };
@@ -152,7 +158,7 @@ actor {
     };
   };
 
-  private func fetch(url : Text, method : { #get; #head; #post }, body : ?Blob) : async Text {
+  private func fetch(url : Text, method : Types.fetch_methods, body : ?Blob) : async Text {
     let ic : Types.IC = actor ("aaaaa-aa");
     let request : Types.http_request_args = {
       url = url;
@@ -174,6 +180,82 @@ actor {
     decoded_text;
   };
 
+  private func contains(arr: [Text], item: Text) : Bool {
+    for (element in arr.vals()) {
+      if (element == item) {
+        return true;
+      }
+    };
+    return false;
+  };
+
+  private func consensusFetch(
+    endpoints : [Text],
+    url : Text,
+    method : Types.fetch_methods,
+    body : ?Blob,
+    percentage_threshold : Nat,
+  ) : async Types.ConsensuedResponse {
+    var responses : [Text] = [];
+    var responseCounts = TrieMap.TrieMap<Text, Nat>(
+      Text.equal,
+      Text.hash,
+    );
+    var in_consensus : Bool = false;
+    var consensus_percentage : Nat = 0;
+    var consensus_endpoints : [Text] = [];
+    var consensus_responses : [Text] = [];
+    var out_of_consensus_endpoints : [Text] = [];
+
+    for (endpoint in endpoints.vals()) {
+      let response : Text = await fetch(
+        endpoint # url,
+        method,
+        body,
+      );
+      responses := Array.append(responses, [response]);
+      let currentCount = Option.get(responseCounts.get(response), 0);
+      responseCounts.put(response, currentCount + 1);
+    };
+
+    let total_responses = Array.size(responses);
+
+    for ((response, count) in responseCounts.entries()) {
+      let percentage = (count * 100) / total_responses;
+      if (percentage >= percentage_threshold) {
+        in_consensus := true;
+        consensus_percentage := percentage;
+        consensus_responses := Array.append(consensus_responses, [response]);
+        var i = 0;
+        for (response in responses.vals()) {
+          if (response == consensus_responses[0]) {
+            consensus_endpoints := Array.append(consensus_endpoints, [endpoints[i]]);
+          };
+          i += 1;
+        };
+      }
+    };
+
+    var i = 0;
+    for (response in responses.vals()) {
+      if (not contains(consensus_responses, response)) {
+        out_of_consensus_endpoints := Array.append(out_of_consensus_endpoints, [endpoints[i]]);
+      };
+      i += 1;
+    };
+
+    let response = if (consensus_responses.size() > 0) consensus_responses[0] else "No consensus";
+    let nodes_checked = endpoints.size();
+    {
+      in_consensus = in_consensus;
+      consensus_percentage = consensus_percentage;
+      consensus_endpoints = consensus_endpoints;
+      nodes_checked;
+      out_of_consensus_endpoints = out_of_consensus_endpoints;
+      response;
+    };
+  };
+
   public func getAssets(
     named : ?Bool,
     cursor : ?Text,
@@ -181,7 +263,7 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_named = Option.get(named, false);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -189,28 +271,39 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets?named=" # Bool.toText(final_named)
+    let url = "/v2/assets?named=" # Bool.toText(final_named)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getAssetInfo(
     asset : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    let url = counterparty_endpoint # "/v2/assets/"
+    let url = "/v2/assets/"
     # asset # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getAssetBalances(
@@ -221,7 +314,7 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_balanceType = Option.get(balanceType, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -229,8 +322,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset
+    let url = "/v2/assets/" # asset
     # "/balances?type=" # getBalanceType(final_balanceType)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -238,7 +330,13 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getBalancesByAssetAndAddress(
@@ -246,13 +344,19 @@ actor {
     address : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    let url = counterparty_endpoint # "/v2/assets/" # asset # "/balances/" # address
+    let url = "/v2/assets/" # asset # "/balances/" # address
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getOrdersByAsset(
@@ -263,7 +367,7 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -271,8 +375,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/orders"
+    let url = "/v2/assets/" # asset # "/orders"
     # "?status=" # getOrderStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -280,7 +383,13 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getOrderMatchesByAsset(
@@ -291,7 +400,7 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -299,8 +408,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/matches"
+    let url = "/v2/assets/" # asset # "/matches"
     # "?status=" # getOrderStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -308,7 +416,13 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getCreditsByAsset(
@@ -318,22 +432,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/credits"
+    let url = "/v2/assets/" # asset # "/credits"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDebitsByAsset(
@@ -343,22 +462,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/debits"
+    let url = "/v2/assets/" # asset # "/debits"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDividendsByAsset(
@@ -368,22 +492,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/dividends"
+    let url = "/v2/assets/" # asset # "/dividends"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getIssuancesByAsset(
@@ -393,22 +522,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/issuances"
+    let url = "/v2/assets/" # asset # "/issuances"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getSendsByAsset(
@@ -418,22 +552,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/sends"
+    let url = "/v2/assets/" # asset # "/sends"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDispensersByAsset(
@@ -444,7 +583,7 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_status = Option.get(status, #all);
     let final_limit = Option.get(limit, 100);
@@ -452,8 +591,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/debits"
+    let url = "/v2/assets/" # asset # "/debits"
     # "?status=" # getDispenserStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -461,7 +599,13 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDispenserByAddressAndAsset(
@@ -469,16 +613,21 @@ actor {
     asset : Text,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/dispensers/" # address
+    let url = "/v2/assets/" # asset # "/dispensers/" # address
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getAssetHolders(
@@ -488,22 +637,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/holders"
+    let url = "/v2/assets/" # asset # "/holders"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDispensesByAsset(
@@ -513,22 +667,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/dispenses"
+    let url = "/v2/assets/" # asset # "/dispenses"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getSubassetsByAsset(
@@ -538,22 +697,27 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/subassets"
+    let url = "/v2/assets/" # asset # "/subassets"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getFairmintersByAsset(
@@ -564,7 +728,7 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_status = Option.get(status, #all);
     let final_limit = Option.get(limit, 100);
@@ -572,8 +736,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/fairminters"
+    let url = "/v2/assets/" # asset # "/fairminters"
     # "?status=" # getFairminterStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -581,70 +744,86 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getFairmintsByAsset(
-    asset: Text,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    asset : Text,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/fairmints"
+    let url = "/v2/assets/" # asset # "/fairmints"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
-    public func getFairmintsByAddressAndAsset(
-    asset: Text,
-    address: Text,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+  public func getFairmintsByAddressAndAsset(
+    asset : Text,
+    address : Text,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/assets/" # asset # "/fairmints" # address
+    let url = "/v2/assets/" # asset # "/fairmints" # address
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getOrders(
-    status: ?OrderStatus,
-    get_asset: ?Text,
-    give_asset: ?Text,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    status : ?OrderStatus,
+    get_asset : ?Text,
+    give_asset : ?Text,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_get_asset = Option.get(get_asset, "None");
     let final_give_asset = Option.get(give_asset, "None");
@@ -654,7 +833,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/orders"
+    let url = "/v2/orders"
     # "?status=" # getOrderStatus(final_status)
     # "&get_asset=" # final_get_asset
     # "&give_asset=" # final_give_asset
@@ -664,33 +843,45 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getOrder(
-    order_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    order_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/orders/" # order_hash
+    let url = "/v2/orders/" # order_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getOrderMatchesByOrder(
-    order_hash: Text,
-    status: ?OrderStatus,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    order_hash : Text,
+    status : ?OrderStatus,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -698,7 +889,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/orders/" # order_hash # "/matches"
+    let url = "/v2/orders/" # order_hash # "/matches"
     # "?status=" # getOrderStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -706,43 +897,55 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getBTCPaysByOrder(
-    order_hash: Text,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    order_hash : Text,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/orders/" # order_hash # "/btcpays"
+    let url = "/v2/orders/" # order_hash # "/btcpays"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getOrdersByTwoAssets(
-    asset1: Text,
-    asset2: Text,
-    status: ?OrderStatus,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ):async Text{
+    asset1 : Text,
+    asset2 : Text,
+    status : ?OrderStatus,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -750,7 +953,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/orders/" # asset1 # "/" # asset2
+    let url = "/v2/orders/" # asset1 # "/" # asset2
     # "?status=" # getOrderStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -758,17 +961,23 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getAllOrderMatches(
-    status: ?OrderStatus,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ):async Text{
+    status : ?OrderStatus,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -776,7 +985,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/order_matches"
+    let url = "/v2/order_matches"
     # "?status=" # getOrderStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -784,17 +993,23 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getBets(
-    status: ?BetStatus,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text{
+    status : ?BetStatus,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #open);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -802,7 +1017,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/bets"
+    let url = "/v2/bets"
     # "?status=" # getBetStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -810,33 +1025,45 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getBet(
-    bet_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    bet_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/bets/" # bet_hash
+    let url = "/v2/bets/" # bet_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getBetMatchesByBet(
-    bet_hash: Text,
-    status: ?BetStatus,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ) : async Text {
+    bet_hash : Text,
+    status : ?BetStatus,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #pending);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -844,235 +1071,301 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/bets/" # bet_hash # "/matches"
+    let url = "/v2/bets/" # bet_hash # "/matches"
     # "?status=" # getBetStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getResolutionsByBet(
-    bet_hash: Text,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    bet_hash : Text,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/bets/" # bet_hash # "/resolutions"
+    let url = "/v2/bets/" # bet_hash # "/resolutions"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getAllBurns(
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/burns"
+    let url = "/v2/burns"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDispensers(
-    status: ?DispenserStatus,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    status : ?DispenserStatus,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/dispensers"
+
+    let url = "/v2/dispensers"
     # "?status=" # getDispenserStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDispenserInfoByHash(
-    dispenser_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    dispenser_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/dispensers/" # dispenser_hash
+    let url = "/v2/dispensers/" # dispenser_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
-  
+
   public func getDispensesByDispenser(
-    dispenser_hash: Text,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    dispenser_hash : Text,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/dispensers/" # dispenser_hash # "/dispenses"
+
+    let url = "/v2/dispensers/" # dispenser_hash # "/dispenses"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDividends(
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/dividends"
+
+    let url = "/v2/dividends"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDividend(
-    dividend_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    dividend_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/dividends/" # dividend_hash
+
+    let url = "/v2/dividends/" # dividend_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
-  
+
   public func getDividendDistribution(
-    dividend_hash: Text,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    dividend_hash : Text,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/dividends/" # dividend_hash # "/credits"
+
+    let url = "/v2/dividends/" # dividend_hash # "/credits"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getDispenses(
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/dispenses"
+
+    let url = "/v2/dispenses"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getSends(
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/sends"
+    let url = "/v2/sends"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getIssuances(
-    asset_events: ?AssetEventType,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    asset_events : ?AssetEventType,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_asset_events = Option.get(asset_events, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -1080,8 +1373,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/issuances"
+    let url = "/v2/issuances"
     # "?asset_events=" # getAssetEventType(final_asset_events)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -1089,107 +1381,142 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getIssuanceByTransactionHash(
-    tx_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    tx_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/issuances/" # tx_hash
+    let url = "/v2/issuances/" # tx_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getSweeps(
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ):async Text{
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/sweeps"
+
+    let url = "/v2/sweeps"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getSweepByTransactionHash(
-    tx_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    tx_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/sweeps/" # tx_hash
+
+    let url = "/v2/sweeps/" # tx_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getValidBroadcasts(
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/broadcasts"
+    let url = "/v2/broadcasts"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getBroadcastByTransactionHash(
-    tx_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    tx_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/broadcasts/" # tx_hash
+    let url = "/v2/broadcasts/" # tx_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getAllFairminters(
-    status: ?FairminterStatus,
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text{
+    status : ?FairminterStatus,
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_status = Option.get(status, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -1197,7 +1524,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/fairminters"
+    let url = "/v2/fairminters"
     # "?status=" # getFairminterStatus(final_status)
     # "&cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
@@ -1205,44 +1532,62 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getAllFairmints(
-    cursor: ?Text,
-    limit: ?Nat,
-    offset: ?Nat,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    cursor : ?Text,
+    limit : ?Nat,
+    offset : ?Nat,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
     let final_offset = Option.get(offset, 0);
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
-    
-    let url = counterparty_endpoint # "/v2/fairmints"
+
+    let url = "/v2/fairmints"
     # "?cursor=" # final_cursor
     # "&limit=" # Nat.toText(final_limit)
     # "&offset=" # Nat.toText(final_offset)
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getFairmint(
-    tx_hash: Text,
-    verbose: ?Bool,
-    show_unconfirmed: ?Bool,
-  ): async Text {
+    tx_hash : Text,
+    verbose : ?Bool,
+    show_unconfirmed : ?Bool,
+  ) : async Types.ConsensuedResponse {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint # "/v2/fairmints/" # tx_hash
+    let url = "/v2/fairmints/" # tx_hash
     # "?verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func getBalancesByAddress(
@@ -1253,7 +1598,7 @@ actor {
     offset : ?Nat,
     verbose : ?Bool,
     show_unconfirmed : ?Bool,
-  ) : async Text {
+  ) : async Types.ConsensuedResponse {
     let final_balanceType = Option.get(balanceType, #all);
     let final_cursor = Option.get(cursor, "None");
     let final_limit = Option.get(limit, 100);
@@ -1261,8 +1606,7 @@ actor {
     let final_verbose = Option.get(verbose, false);
     let final_show_unconfirmed = Option.get(show_unconfirmed, false);
 
-    let url = counterparty_endpoint
-    # "/v2/addresses/balances"
+    let url = "/v2/addresses/balances"
     # "?addresses=" # address
     # "&type=" # getBalanceType(final_balanceType)
     # "&cursor=" # final_cursor
@@ -1271,7 +1615,13 @@ actor {
     # "&verbose=" # Bool.toText(final_verbose)
     # "&show_unconfirmed=" # Bool.toText(final_show_unconfirmed);
 
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
   public func composeSend(
@@ -1282,8 +1632,8 @@ actor {
     exclude_utxos_with_balances : Bool,
     use_enhanced_send : Bool,
     verbose : Bool,
-  ) : async Text {
-    let url = counterparty_endpoint # "/v2/addresses/" # address # "/compose/send"
+  ) : async Types.ConsensuedResponse {
+    let url = "/v2/addresses/" # address # "/compose/send"
     # "?asset=" # asset
     # "&use_enhanced_send=" # Bool.toText(use_enhanced_send)
     # "&address=" # address
@@ -1291,7 +1641,13 @@ actor {
     # "&destination=" # destination
     # "&quantity=" # Nat.toText(quantity)
     # "&exclude_utxos_with_balances=" # Bool.toText(exclude_utxos_with_balances);
-    await fetch(url, #get, null);
+    await consensusFetch(
+      counterparty_endpoints,
+      url,
+      #get,
+      null,
+      percentage_treshold,
+    );
   };
 
 };
