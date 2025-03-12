@@ -143,12 +143,6 @@ actor {
     },
   ];
 
-  var entropy : Blob = Blob.fromArray([]);
-
-  private func initEntropy() : async () {
-    entropy := await Random.blob();
-  };
-
   public query func transform({
     context : Blob;
     response : Types.http_request_result;
@@ -158,24 +152,12 @@ actor {
     };
   };
 
-  private func generateUUID() : async Text {
-    if (Blob.compare(entropy, Blob.fromArray([])) == #equal) {
-      await initEntropy();
-    };
-    UUID.generateV4(entropy);
-  };
-
   private func fetch(url : Text, method : { #get; #head; #post }, body : ?Blob) : async Text {
     let ic : Types.IC = actor ("aaaaa-aa");
-    let idempotencyHeader = {
-      name = "Idempotency-Key";
-      value = await generateUUID();
-    };
-    let httpHeaders = Array.append(commonHttpHeaders, [idempotencyHeader]);
     let request : Types.http_request_args = {
       url = url;
       max_response_bytes = null;
-      headers = httpHeaders;
+      headers = commonHttpHeaders;
       body = body;
       method = method;
       transform = ?{
