@@ -16,7 +16,7 @@ actor {
     //"https://classic-api.tokenscan.io:4001",
   ];
 
-  let percentage_treshold = 50;
+  let percentage_treshold = 51;
 
   type BalanceType = {
     #all;
