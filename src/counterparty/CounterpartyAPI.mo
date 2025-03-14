@@ -13,7 +13,6 @@ actor {
     "https://counterparty.0.srcpad.pro",
     "https://api.counterparty.io:4000",
     "https://cp20-api.tokenscan.io:4001",
-    //"https://classic-api.tokenscan.io:4001",
   ];
 
   let percentage_treshold = 51;
