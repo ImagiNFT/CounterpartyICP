@@ -205,13 +205,18 @@ actor {
     var consensus_endpoints : [Text] = [];
     var consensus_responses : [Text] = [];
     var out_of_consensus_endpoints : [Text] = [];
+    var promises : [async Text] = [];
 
     for (endpoint in endpoints.vals()) {
-      let response : Text = await fetch(
+      let promise =  fetch(
         endpoint # url,
         method,
         body,
       );
+      promises := Array.append(promises, [promise]);
+    };
+    for (promise in promises.vals()) {
+      let response = await promise;
       responses := Array.append(responses, [response]);
       let currentCount = Option.get(responseCounts.get(response), 0);
       responseCounts.put(response, currentCount + 1);
