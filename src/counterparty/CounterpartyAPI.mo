@@ -11,7 +11,7 @@ import TrieMap "mo:base/TrieMap";
 actor {
   let counterparty_endpoints : [Text] = [
     "https://counterparty.0.srcpad.pro",
-    "https://api.counterparty.io:4000",
+    //"https://api.counterparty.io:4000", // Waiting for IPV6 support from public node
     "https://cp20-api.tokenscan.io:4001",
   ];
 

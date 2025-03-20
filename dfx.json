@@ -1,6 +1,6 @@
 {
   "canisters": {
-    "CounterpartyAPI": {
+    "CounterpartyICP": {
       "main": "src/counterparty/CounterpartyAPI.mo",
       "type": "motoko"
     }
